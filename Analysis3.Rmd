@@ -1,0 +1,336 @@
+---
+title: "Analysis 3"
+author: "Seline Yang, Alex Osier, Nick Clinch, Terry Lee"
+date: "2/20/2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(glmnet)
+library(plyr)
+library(psych)
+library(ggplot2)
+library(leaps)
+library(boot)
+```
+
+#Section 1: Data Processing and EDA
+```{r, include=FALSE}
+college=read.csv("CollegeData_Names.csv")
+head(college)
+dim(college)
+college.matrix<-data.frame(college[,4:20]) 
+round(cor(college.matrix),2)
+
+#plot(college)#too many plots
+summary(college)
+variable<-cbind(colnames(college[,4:20]))
+#variable
+varname<-colnames(college[,])
+varname
+
+for (i in 4:20){
+  #print(variable[i])
+  plot(college[,i]~Private, data = college, main= varname[i])
+  #Sys.sleep(2)
+}
+```
+
+There are 19 variables in the dataset, two of which are categorical and the rest of which are quantitative. The correlation matrix of quantitative variables indicated that F.Undergrad is highly correlated to Apps(.81), and Top10perc to Top25perc(.89). Here are the scatter plots.
+```{r,fig.height=4,fig.width=10,echo=FALSE}
+par(mfrow=c(1,2))
+plot(college$F.Undergrad,college$Apps, main = "Scatter Plot of Apps vs F.Undergrad")
+plot(college$Top10perc,college$Top25perc, main = "Scatter Plot of Top25perc vs Top10perc")
+
+```
+
+```{r,include=FALSE, echo=FALSE}
+par(mar=c(1,1,1,1))
+multi.hist(college[,4:20])
+```
+
+Then, we generated 17 boxplots for Private versus all other quantitaive variables. 
+Private and public schools showed noticeable differences in Apps, F.Undergrad, Outstate, Room.Board, S.F.Ratio, and perc.almuni.
+
+```{r, echo=FALSE,fig.height=3,fig.width=10}
+par(mfrow=c(1,3))
+for (i in c(4,9,11,12,17,18)){
+  plot(college[,i]~Private, data = college, main= varname[i])
+}
+```
+
+By looking at the data distribution from each variable, we found that Apps, F.Undergrad, P.Undergrad, Terminal, Expend, and Personal are highly skewed. So we might need to do some transformations for these data for fitting the models.
+
+```{r,echo=FALSE,fig.height=2,fig.width=10}
+par(mfrow=c(1,3))
+hist(college$Apps)
+hist(college$F.Undergrad)
+hist(college$P.Undergrad)
+hist(college$Terminal)
+hist(college$Expend)
+hist(college$Personal)
+```
+
+
+
+#Section 2: The Full Model
+```{r, echo=FALSE}
+college18<-college[,3:20]
+MFull<-lm(Apps~., data=college18)
+summary(MFull)
+mse <- function(sm) mean(sm$residuals^2)
+set.seed(34254)
+
+
+cv.error.10 = rep(0,10)
+
+for(i in 1:10){
+  glM1 = glm(Apps~., data=college18)
+  cv.error.10[i] = cv.glm(college18,glM1, K = 10)$delta[1]
+}
+sum(cv.error.10)/10
+```
+
+
+
+$R^2$ of the Full model is 0.7962, which means 79.62% of variability in Apps was explained by our full model. We used 10-fold CV to estimate the test MSE because of its bias-variance balancing property and computational efficiency. The estimated test MSE is 3313172, which is extremly huge. 
+Since some of the variables are highly skewed, so we might need to do some transformation in order to reduce the MSE. So we suggested to use log transformation for skewed and wide distributions. 
+
+```{r, echo=FALSE}
+MFull2<-lm(Apps~Private+Accept+Enroll+Top10perc+Top25perc+log(F.Undergrad)+log(P.Undergrad)+Outstate+Room.Board+Books+Personal+PhD+Terminal+S.F.Ratio+perc.alumni+Expend+Grad.Rate,
+           data=college[,cbind(-1,-2)])
+#MFull2<-lm(log(Apps)~.,data=college[,cbind(-1,-2)])
+summary(MFull2)
+mse(MFull2)
+```
+
+Thought it would be nicer to make log transformations of those varibles who are skewed. But once we changed, the $R^2$ is not improved, and so isn't MSE. But if we do a log transformation of the response variable, we noticed that $R^2$ has improved. Also, the training MSE is much more smaller than before. 
+
+```{r}
+confint(MFull2)
+```
+
+Looking at the confidence interval for our model, we see that the range isn't great.  While some variables have small confidence intervals, others do not, which makes us believe that we should perform varaible selection.
+
+
+
+#Section 3: Subset Selection
+##3.
+Two possible approximations to BSS are forward selection and backwards elimination. Forward selection starts with only the intercept and keeps adding a variable that results in the highest $R^2$ each step until $R^2$ cannot be improved by adding another variable. On the other hand, backwards elimination starts with the full model and keeps removing a variable likewise until $R^2$ cannot be improved by removing another variable.  
+
+##4.
+Data set with a large number of predictors would motivate us to use an approximation technique since BSS fits all possible $2^p$ models given p possible explanatory variables. With such a data set, BSS will be computationally expensive compared to approximation techniques.
+
+##5.
+Since BSS would require that we fit $2^{17}$ models, it's essentially required that we use a different form of subset selection. Instead, we will use backwards selection to pick the best model.
+```{r,echo=FALSE,include=FALSE}
+back.sel.model<-step(MFull, direction = "backward")
+summary(back.sel.model)
+
+```
+
+
+```{r, echo = FALSE}
+MLS = lm(formula = Apps ~ Private + Accept + Enroll + Top10perc + F.Undergrad + 
+    P.Undergrad + Room.Board + Terminal + perc.alumni + Expend + 
+    Grad.Rate, data = college[, cbind(-1, -2)])
+summary(MLS)
+mean(MLS$residuals^2)
+```
+The best model selected by backwards selection with the AIC criterion is of the form Apps ~ Private + Accept + Enroll + Top10perc + F.Undergrad + P.Undergrad + Room.Board + Terminal + perc.alumni + Expend + Grad.Rate.
+
+##6.
+It isn't particularly surprising that Books, Personal, and Top25perc were removed by backwards elimination. The cost of books is minor compared to the total cost of attending a college and doesn't intuitively seem to be an important predictor. Similarly, both Top10perc and Top25perc should serve as measures of prestige for a school, so it isn't very surprising that one of the two would be eliminated during backward selection. However, the removal of S.F.Ratio is surprising, since one would imagine that a high ratio would usually indicate that the college is quite large and therefore would recieve a large number of applications.
+
+##7.
+I would prefer the model $M_{LS}$ over the full model, since the smaller model is easier to interpret and is less likely to be overfit than the full model.
+
+#Section 4: Ridge 
+##8. 
+Ridge regression is a technique for analyzing multiple regression data that suffer from multicollinearity. When multicollinearity occurs, least squares estimates are unbiased, but the variance are large so they may be far from the true value.
+
+
+##9.
+To select the best value of $\lambda$, we will iterate, roughly, from $log(\lambda) = 6$ to $15$ and compute the MSE for each value of $log(\lambda)$. Then we select the value with the lowest associated MSE as our $\lambda$ for Ridge Regression. We find that the most appropriate $\lambda$ would be 379.0722.
+
+```{r, echo=FALSE}
+new_college <- college[,cbind(-1,-2)]
+xinfo = model.matrix(Apps~ . , data = new_college)[,-1]
+
+ridge.mod = glmnet( xinfo, new_college$Apps, alpha =0 , standardize = TRUE)
+
+summary(ridge.mod$lambda)
+
+
+grid <- c(0,10^seq(10,-2,length=100))
+ridge.mod <- glmnet( xinfo, new_college$Apps, alpha =0 , lambda = grid, standardize = TRUE)
+
+# Obtain a summary of our grid of lambda values
+summary(ridge.mod$lambda)
+
+dim(coef(ridge.mod))
+
+plot(ridge.mod, xvar="lambda", label =TRUE)
+
+
+set.seed(1)
+# How many original training points do we have? 
+n <- nrow(new_college)
+# Split the data 
+CV_train = sample(1:n, .6*n, replace = FALSE)
+Validation = c(1:n)[-CV_train]
+
+xinfoCV <- model.matrix(Apps~ . , data = new_college[CV_train,])[,-1]
+yinfoCV <- new_college$Apps[CV_train]
+grid <- c(0,10^seq(10,-2,length=100))
+ridge.mod.CV <- glmnet( xinfoCV, yinfoCV , alpha =0 , lambda = grid, standardize = TRUE)
+
+preds <- predict(ridge.mod.CV, s = 4 , newx = xinfo[Validation,])
+
+mean((new_college$Apps[Validation] - preds)^2)
+
+
+preds <- predict(ridge.mod.CV, s = 0 , newx = xinfo[Validation,])
+# (3)
+mean((new_college$Apps[Validation] - preds)^2)
+
+
+set.seed(1)
+cv.out <- cv.glmnet(xinfoCV, yinfoCV, alpha = 0 )
+
+plot(cv.out)
+cv.out$lambda.min
+
+#the outomated way 
+set.seed(890)
+cv.out<-cv.glmnet(xinfoCV, yinfoCV, alpha = 0)
+#plot(cv.out)
+cv.out$lambda.min
+```
+
+
+##10.
+The coefficient estimates with our choice of $\lambda$ are:
+```{r, echo=FALSE}
+ridge.final <- glmnet( xinfo, new_college$Apps, alpha =0 , lambda = cv.out$lambda.min )
+predict(ridge.final, type = "coefficients", s = cv.out$lambda.min)
+```
+
+##11.
+Compare the coeficients:
+
+```{r}
+ridgeCoeff <- coef(ridge.final)
+CoefMat <- cbind(coef(ridge.mod)[,101],coef(ridge.final))
+colnames(CoefMat) <- c("LS", "Ridge")
+CoefMat
+```
+
+```{r, echo=FALSE}
+ridge.pred <- predict(ridge.mod, s=cv.out$lambda.min, newx = xinfo[-CV_train,])
+mean((new_college$Apps[-CV_train]-ridge.pred)^2)
+```
+
+Looking at the MSE of Ridge, we see that it is lower than the MSE of the full model by almost a third.  However, the coefficients don't really tell a story.  Since the process is automated by R, I believe that it is putting more "weight" on coefficients that are important compared to those that are not.  This leads me to believe that we need some variable selection as well.  This leads us to Lasso.
+
+#Section 5: Lasso
+##12.
+Lasso combines the variable selection abilities of BSS with the shrinkage properties of ridge regression to find the best fit of $\hat{\beta}$. Lasso can yield either a more accurate or more interpretable model than ridge regression. 
+
+##13.
+To select the best value of $\lambda$, we will iterate from $log(\lambda) = 1$ to $8$ and compute the MSE for each value of $log(\lambda)$. Then we select the value with the lowest associated MSE as our $\lambda$ for Lasso.
+```{r, echo=FALSE}
+lasso.mod<-glmnet(xinfo[CV_train,], college$Apps[CV_train], alpha = 1)
+plot(lasso.mod, xvar="lambda", label = TRUE)
+
+#choose lambda
+set.seed(97)
+cvL.out<-cv.glmnet(xinfo[CV_train,], college$Apps[CV_train], alpha = 1)
+plot(cvL.out)
+bestlamLasso<-cvL.out$lambda.min; bestlamLasso
+
+```
+
+Break
+```{r,echo=FALSE}
+ridge.mod = glmnet( xinfo, new_college$Apps, alpha = 1, standardize = TRUE)
+
+summary(ridge.mod$lambda)
+plot(ridge.mod, xvar="lambda", label =TRUE)
+set.seed(1)
+# How many original training points do we have? 
+n <- nrow(new_college)
+# Split the data 
+CV_train = sample(1:n, .6*n, replace = FALSE)
+Validation = c(1:n)[-CV_train]
+
+xinfoCV <- model.matrix(Apps~ . , data = new_college[CV_train,])[,-1]
+yinfoCV <- new_college$Apps[CV_train]
+ridge.mod.CV <- glmnet( xinfoCV, yinfoCV , alpha =1, standardize = TRUE)
+
+preds <- predict(ridge.mod.CV, s = 4 , newx = xinfo[Validation,])
+
+mean((new_college$Apps[Validation] - preds)^2)
+
+
+preds <- predict(ridge.mod.CV, s = 0 , newx = xinfo[Validation,])
+# (3)
+mean((new_college$Apps[Validation] - preds)^2)
+
+
+set.seed(1)
+cv.out <- cv.glmnet(xinfoCV, yinfoCV, alpha = 1 )
+
+plot(cv.out)
+cv.out$lambda.min
+```
+
+
+##14.
+Once again, the coeffiecient estimates that we get from Lasso for our choice of $\lambda$ are:
+```{r, echo=FALSE}
+outLasso<-glmnet(xinfo, college$Apps, alpha=1, lambda=bestlamLasso)
+lasso.coef<-predict(outLasso, type = "coefficients", s=bestlamLasso)
+lasso.coef
+```
+
+ALTERNATIVE LASSO
+```{r}
+outLasso<-glmnet(xinfo, college$Apps, alpha=1, lambda=cv.out$lambda.min)
+lasso.coef2<-predict(outLasso, type = "coefficients", s=cv.out$lambda.min)
+lasso.coef2
+```
+
+##15.
+```{r}
+CoefMat <- cbind(ridgeCoeff,lasso.coef)
+colnames(CoefMat) <- c("Ridge", "Lasso")
+CoefMat
+```
+Lasso recommends removing Top25Perc, Outstate, Books, and S.F.Ratio from the model. Both coefficient estimates for Outstate and Books were already very close to zero in our Ridge model, while the ones for Top25Perc and S.F.Ratio were small but not as close to zero.
+
+```{r}
+
+ridge.pred <- predict(ridge.mod, s=cv.out$lambda.min, newx = xinfo[-CV_train,])
+mean((new_college$Apps[-CV_train]-ridge.pred)^2)
+
+lasso.pred <- predict(outLasso, s =bestlamLasso, newx = xinfo[-CV_train,])
+mean((new_college$Apps[-CV_train]-lasso.pred)^2)
+```
+
+Comparing the MSE ridge to the MSE lasso, we see the lasso has a lower MSE.  We would almost expect this since the lasso has variable selection as well as dealing with how variance and giant coefficients.
+
+
+#Section 6: Choosing a model
+The final model that we have chosen to work with is the model selected by Lasso. Unlike the full model and Ridge Regression, the lasso model carries out subset selection. Furthermore, the explanatory variables removed by subset selection agree with the variables eliminated by backwards selection with the AIC criterion, which implies that the subset selection of Lasso was carried out in a smart manner. Lastly, the Lasso model performs shrinkage, which the BSS model fails to do. Thus, the Lasso model provides the best combination of subset selection, RSS minimization, and shrinkage.
+
+The final model is of the form:  
+
+Apps ~ PrivateYes + Accept + Enroll + Top10perc + F.Undergrad + P.Undergrad + Room.Board + Personal + PhD + Terminal + perc.alumni + Expend + Grad.Rate 
+
+#Section 7: Executive Summary / Abstract 
+
+In this analysis, we explore the relation between the number of applications that a college receives and a number of possible explanatory variables. We then compare the effectiveness of several modelling techniques and compare their relative effectiveness for both prediction and interpretability. We first start with fitting the full model and explore the impact of some basic transformations on the MSE. Then, we move on to more advanced methods like psuedo-Best Subset Selection (i.e. Backwards Elimination with the AIC criterion) and Ridge Regression to see the effects of variable selection and shrinkage on our model. Ultimately, we perform and settle upon Lasso as the optimal tradeoff of variable selection, shrinkage, accuracy, and interpretability.
+
+
